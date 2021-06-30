@@ -803,21 +803,38 @@ func (cc *XController) updateEtcd(qj *arbv1.AppWrapper, at string) error {
 }
 
 func (qjm *XController) backoff(q *arbv1.AppWrapper, reason string, message string) {
-	q.Status.QueueJobState = arbv1.AppWrapperCondBackoff
-	cond := GenerateAppWrapperCondition(arbv1.AppWrapperCondBackoff, v1.ConditionTrue, reason, message)
-	q.Status.Conditions = append(q.Status.Conditions, cond)
-	q.Status.FilterIgnore = true  // update QueueJobState only, no work needed
-	qjm.updateEtcd(q, "[backoff]Rejoining")
-	qjm.qjqueue.AddUnschedulableIfNotPresent(q)
-	glog.V(3).Infof("[backoff] %s move to unschedulableQ before sleep for %d seconds. activeQ=%t Unsched=%t &qj=%p Version=%s Status=%+v", q.Name, qjm.serverOption.BackoffTime, qjm.qjqueue.IfExistActiveQ((q)), qjm.qjqueue.IfExistUnschedulableQ((q)), q, q.ResourceVersion, q.Status)
-	time.Sleep(time.Duration(qjm.serverOption.BackoffTime) * time.Second)
-	qjm.qjqueue.MoveToActiveQueueIfExists(q)
-	q.Status.QueueJobState = arbv1.AppWrapperCondQueueing
-	returnCond := GenerateAppWrapperCondition(arbv1.AppWrapperCondQueueing, v1.ConditionTrue, "BackoffTimerExpired.", "")
-	q.Status.Conditions = append(q.Status.Conditions, returnCond)
-	q.Status.FilterIgnore = true  // update QueueJobState only, no work needed
-	qjm.updateEtcd(q, "[backoff] Queueing")
-	glog.V(3).Infof("[backoff] %s activeQ.Add after sleep for %d seconds. activeQ=%t Unsched=%t &qj=%p Version=%s Status=%+v", q.Name, qjm.serverOption.BackoffTime, qjm.qjqueue.IfExistActiveQ((q)), qjm.qjqueue.IfExistUnschedulableQ((q)), q, q.ResourceVersion, q.Status)
+	var workingAW *arbv1.AppWrapper
+	apiCacheAWJob, e := qjm.queueJobLister.AppWrappers(q.Namespace).Get(q.Name)
+	// Update condition
+	if (e == nil) {
+		workingAW = apiCacheAWJob
+		apiCacheAWJob.Status.QueueJobState = arbv1.AppWrapperCondBackoff
+		cond := GenerateAppWrapperCondition(arbv1.AppWrapperCondBackoff, v1.ConditionTrue, reason, message)
+		workingAW.Status.Conditions = append(workingAW.Status.Conditions, cond)
+		workingAW.Status.FilterIgnore = true // update QueueJobState only, no work needed
+		qjm.updateEtcd(workingAW, "backoff - Rejoining")
+	} else {
+		workingAW = q
+		glog.Errorf("[backoff] Failed to retrieve cached object for %s/%s.  Continuing with possible stale object without updating conditions.", workingAW.Namespace,workingAW.Name)
+	}
+	qjm.qjqueue.AddUnschedulableIfNotPresent(workingAW)
+	glog.V(3).Infof("[backoff] %s move to unschedulableQ before sleep for %d seconds. activeQ=%t Unsched=%t &qj=%p Version=%s Status=%+v", workingAW.Name,
+		qjm.serverOption.BackoffTime, qjm.qjqueue.IfExistActiveQ((workingAW)), qjm.qjqueue.IfExistUnschedulableQ((workingAW)), workingAW, workingAW.ResourceVersion, workingAW.Status)
+ 	time.Sleep(time.Duration(qjm.serverOption.BackoffTime) * time.Second)
+	qjm.qjqueue.MoveToActiveQueueIfExists(workingAW)
+
+	// Update condition after backoff
+	apiCacheAWJob, e = qjm.queueJobLister.AppWrappers(q.Namespace).Get(q.Name)
+	if (e == nil) {
+		workingAW = apiCacheAWJob
+		workingAW.Status.QueueJobState = arbv1.AppWrapperCondQueueing
+		returnCond := GenerateAppWrapperCondition(arbv1.AppWrapperCondQueueing, v1.ConditionTrue, "BackoffTimerExpired.", "")
+		workingAW.Status.Conditions = append(workingAW.Status.Conditions, returnCond)
+		workingAW.Status.FilterIgnore = true  // update QueueJobState only, no work needed
+		qjm.updateEtcd(workingAW, "backoff - Queueing")
+	}
+	glog.V(3).Infof("[backoff] %s activeQ.Add after sleep for %d seconds. activeQ=%t Unsched=%t &aw=%p Version=%s Status=%+v", workingAW.Name,
+		qjm.serverOption.BackoffTime, qjm.qjqueue.IfExistActiveQ((workingAW)), qjm.qjqueue.IfExistUnschedulableQ((workingAW)), workingAW, workingAW.ResourceVersion, workingAW.Status)
 }
 
 // Run start AppWrapper Controller
@@ -1359,7 +1376,7 @@ func (cc *XController) manageQueueJob(qj *arbv1.AppWrapper) error {
 
 //Cleanup function
 func (cc *XController) Cleanup(queuejob *arbv1.AppWrapper) error {
-	glog.V(3).Infof("[Cleanup] begin AppWrapper %s Version=%s Status=%+v\n", queuejob.Name, queuejob.ResourceVersion, queuejob.Status)
+	glog.V(4).Infof("[Cleanup] begin AppWrapper %s Version=%s Status=%+v\n", queuejob.Name, queuejob.ResourceVersion, queuejob.Status)
 
 	if !cc.isDispatcher {
 		if queuejob.Spec.AggrResources.Items != nil {
@@ -1382,7 +1399,7 @@ func (cc *XController) Cleanup(queuejob *arbv1.AppWrapper) error {
 	queuejob.Status.Running      = 0
 	queuejob.Status.Succeeded    = 0
 	queuejob.Status.Failed       = 0
-	glog.V(3).Infof("[Cleanup] end   AppWrapper %s Version=%s Status=%+v\n", queuejob.Name, queuejob.ResourceVersion, queuejob.Status)
+	glog.V(10).Infof("[Cleanup] end   AppWrapper %s Version=%s Status=%+v\n", queuejob.Name, queuejob.ResourceVersion, queuejob.Status)
 
 	return nil
 }
