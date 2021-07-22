@@ -24,7 +24,7 @@ import (
 
 	arbv1 "github.com/IBM/multi-cluster-app-dispatcher/pkg/apis/controller/v1alpha1"
 
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
@@ -34,22 +34,22 @@ import (
 
 const schedulingSpecKindName = arbv1.SchedulingSpecPlural + "." + arbv1.GroupName
 
-func CreateSchedulingSpecKind(clientset apiextensionsclient.Interface) (*apiextensionsv1beta1.CustomResourceDefinition, error) {
-	crd := &apiextensionsv1beta1.CustomResourceDefinition{
+func CreateSchedulingSpecKind(clientset apiextensionsclient.Interface) (*apiextensionsv1.CustomResourceDefinition, error) {
+	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: schedulingSpecKindName,
 		},
-		Spec: apiextensionsv1beta1.CustomResourceDefinitionSpec{
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
 			Group:   arbv1.GroupName,
-			Version: arbv1.SchemeGroupVersion.Version,
-			Scope:   apiextensionsv1beta1.NamespaceScoped,
-			Names: apiextensionsv1beta1.CustomResourceDefinitionNames{
+			Versions: arbv1.Versions,
+			Scope:   apiextensionsv1.NamespaceScoped,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Plural: arbv1.SchedulingSpecPlural,
 				Kind:   reflect.TypeOf(arbv1.SchedulingSpec{}).Name(),
 			},
 		},
 	}
-	_, err := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Create(context.Background(), crd, metav1.CreateOptions{})
+	_, err := clientset.ApiextensionsV1().CustomResourceDefinitions().Create(context.Background(), crd, metav1.CreateOptions{})
 
 	if err != nil {
 		return nil, err
@@ -57,18 +57,18 @@ func CreateSchedulingSpecKind(clientset apiextensionsclient.Interface) (*apiexte
 
 	// wait for CRD being established
 	err = wait.Poll(500*time.Millisecond, 60*time.Second, func() (bool, error) {
-		crd, err = clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Get(context.Background(), schedulingSpecKindName, metav1.GetOptions{})
+		crd, err = clientset.ApiextensionsV1().CustomResourceDefinitions().Get(context.Background(), schedulingSpecKindName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
 		for _, cond := range crd.Status.Conditions {
 			switch cond.Type {
-			case apiextensionsv1beta1.Established:
-				if cond.Status == apiextensionsv1beta1.ConditionTrue {
+			case apiextensionsv1.Established:
+				if cond.Status == apiextensionsv1.ConditionTrue {
 					return true, err
 				}
-			case apiextensionsv1beta1.NamesAccepted:
-				if cond.Status == apiextensionsv1beta1.ConditionFalse {
+			case apiextensionsv1.NamesAccepted:
+				if cond.Status == apiextensionsv1.ConditionFalse {
 					fmt.Printf("Name conflict: %v\n", cond.Reason)
 				}
 			}
@@ -76,7 +76,7 @@ func CreateSchedulingSpecKind(clientset apiextensionsclient.Interface) (*apiexte
 		return false, err
 	})
 	if err != nil {
-		deleteErr := clientset.ApiextensionsV1beta1().CustomResourceDefinitions().Delete(context.Background(), schedulingSpecKindName, metav1.DeleteOptions{})
+		deleteErr := clientset.ApiextensionsV1().CustomResourceDefinitions().Delete(context.Background(), schedulingSpecKindName, metav1.DeleteOptions{})
 		if deleteErr != nil {
 			return nil, errors.NewAggregate([]error{err, deleteErr})
 		}
